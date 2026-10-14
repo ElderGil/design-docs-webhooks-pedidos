@@ -1,3 +1,19 @@
-# RFC — Request for Comments
+# RFC: Sistema de Webhooks de Notificação de Pedidos
 
-<!-- documento a ser elaborado -->
+<!-- em elaboração -->
+
+## Metadados
+
+## Resumo (TL;DR)
+
+## Contexto e problema
+
+## Proposta técnica
+
+## Alternativas consideradas
+
+## Questões em aberto
+
+## Impacto e riscos
+
+## Decisões relacionadas

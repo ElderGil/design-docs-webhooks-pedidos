@@ -1,3 +1,6 @@
-# Tracker
+# Tracker de rastreabilidade
 
-<!-- acompanhamento do trabalho será preenchido posteriormente -->
+<!-- em elaboração -->
+
+| ID | Documento | Tipo | Conteúdo (resumo) | Fonte | Localização |
+| --- | --- | --- | --- | --- | --- |
