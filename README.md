@@ -12,6 +12,7 @@ O trabalho aqui é transformar essa transcrição e o código existente (Node.js
 
 - **Claude Code com Claude Opus 5.5.** Ferramenta principal, para ler o código e a transcrição, fazer a triagem fala a fala e apoiar a escrita e as correções dos documentos.
 - **Claude Sonnet 5.5 como revisor independente.** Um subagente só de leitura, no papel de advogado do diabo, revisando cada documento sem saber o que eu achava. O modelo diferente foi de propósito: quem escreve não aprova o próprio texto.
+- **Revisão final com outro agente e outro modelo.** Com o pacote pronto, uma revisão completa, fora do fluxo de escrita. Ela leu as 274 linhas do tracker uma a uma, confrontou o desenho com o código e conferiu os critérios do enunciado.
 - **Material do curso.** O prompt de FDD do módulo de Design Docs deu o esqueleto do FDD. O agente `adr-generator`, do plugin `adrs-management` do curso, deu o formato das ADRs. A aula "Principais Seções em um PRD de Feature" orientou o PRD.
 - **Scripts Python de conferência.** Fiz scripts pequenos para checar o que dá para checar sem julgamento: se cada `[hh:mm] Nome` existe na transcrição com aquele falante, se cada caminho de código existe, se os links e as âncoras abrem, e as porcentagens do tracker.
 
@@ -112,7 +113,7 @@ Confira cada localização antes de escrever; errar o falante invalida a linha.
 
 ## Iterações e ajustes
 
-Foram oito ciclos principais de geração e revisão: o plano, a triagem e um por documento, com as ADRs passando por dois. Em cada documento, o revisor de outro modelo achou algo que tinha passado na primeira versão.
+Foram oito ciclos principais de geração e revisão: o plano, a triagem e um por documento, com as ADRs passando por dois. Depois veio uma revisão final do pacote inteiro. Em cada etapa, o revisor de outro modelo achou algo que tinha passado na versão anterior.
 
 ### 1. O plano tinha erro de atribuição antes de existir documento
 
@@ -146,7 +147,27 @@ Cada um foi corrigido e virou critério de aceite técnico.
 
 O tracker tinha 257 linhas e passou em todos os scripts. Na amostra de 73 linhas que o revisor leu na fonte, 60 sustentavam o item por inteiro, 9 em parte e 4 não sustentavam. Uma citava "eu atualizo os clientes hoje à tarde" como origem de um piloto que a reunião nunca definiu. Corrigi as 13, troquei para CODIGO o que vinha do código, e não da fala, e declarei no cabeçalho a regra do que conta como item.
 
-Choque de realidade: script garante formato, só leitura garante sentido. O que mais pegou erro neste desafio foi pôr um segundo modelo para discordar do primeiro e conferir cada discordância na transcrição.
+### 6. A revisão final achou contradição que eu tinha marcado como proposta
+
+Com o pacote publicado, passei tudo por mais uma revisão, com outro agente e outro modelo. Ela leu as 274 linhas do tracker uma a uma e confrontou o desenho com o código. Os achados que mais mudaram os documentos:
+
+- Na rotação de secret, uma segunda troca descartava a secret antiga na hora e quebrava as 24 h que a Sofia definiu. Estava marcado como "(proposta)". O problema? Marcar como proposta não resolve contradição com requisito fechado. Agora uma nova troca durante a carência é recusada com 409.
+- O diagrama dizia "busca webhooks ativos", e o texto dizia que webhook pausado acumula eventos. Quem seguisse o diagrama perderia os eventos da pausa.
+- O cadastro público da API aceita `role: ADMIN` sem login. O reprocessamento "só por ADMIN" confere a role, mas qualquer um consegue essa role. Não é bug da feature, e o desafio não mexe no código. Virou lacuna no RFC e risco no PRD e no FDD.
+- `created_at` com milissegundo empata, e o MySQL não garante a ordem de linhas empatadas. A ordem por pedido passou a usar uma coluna `seq`.
+- O FDD escrevia as colunas em snake_case, mas o projeto usa camelCase (`customerId` em `orders`). Num `$queryRaw`, isso vira erro.
+- A cobertura de 80% não estava demonstrada. As 274 linhas não dizem quantos itens os documentos têm. O tracker ganhou um inventário por seção, com numerador, denominador e o que ficou fora da conta.
+
+O worker também ficou mais preciso no que promete:
+- os 2 s de espera valem quando há vaga livre;
+- cada tentativa fecha numa transação só;
+- o corpo da resposta do cliente é lido até 4 KB, não inteiro para cortar depois.
+
+Duas coisas eu não fiz. Não troquei a arquitetura, que a revisão manteve. E não corrigi o código herdado.
+
+Antes de publicar as correções, passei o diff pelo Sonnet de novo. Ele pegou o que eu tinha deixado escapar na correção. O mais importante: a coluna `seq` usa autoincremento, e a Larissa tinha respondido "Tudo é uuid" quando o Diego perguntou sobre id autoincremental ([09:51] Larissa). A `seq` não é id, mas o conflito existe. Ficou como proposta, com lacuna no RFC para a sessão de revisão. Ele também mostrou que a métrica de fila parada contaria eventos que só esperavam o anterior do mesmo pedido, e que a cobertura precisava de um mapeamento unidade por unidade para alguém conseguir refazer a conta.
+
+Choque de realidade: script garante formato, só leitura garante sentido. O que mais pegou erro neste desafio foi pôr um segundo modelo para discordar do primeiro e conferir cada discordância na transcrição. E a revisão final mostrou que vale trocar de revisor: ela achou coisa em trecho que já tinha passado por outra revisão.
 
 ## Como navegar a entrega
 
