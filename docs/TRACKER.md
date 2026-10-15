@@ -267,7 +267,7 @@ Ficam de fora o que deriva de um item já rastreado: os cenários de uso do PRD,
 | FDD-INT-20 | `docs/FDD.md` | Integração | `customer.repository.ts` valida o `customerId` no cadastro | CODIGO | `src/modules/customers/customer.repository.ts` |
 | FDD-INT-21 | `docs/FDD.md` | Integração | Fábrica `createTestWebhook` nos helpers de teste | CODIGO | `tests/helpers/factories.ts` |
 | FDD-INT-21B | `docs/FDD.md` | Integração | Limpeza das quatro tabelas novas no `beforeEach`, antes de `order` | CODIGO | `tests/setup.ts` |
-| FDD-INT-22 | `docs/FDD.md` | Integração | Módulo `src/modules/webhooks` (a criar) com routes, controller, service, repository e schemas no padrão dos outros módulos; errors, publisher e signer saem de [09:28] e [09:41] Bruno | TRANSCRICAO | [09:27] Bruno |
+| FDD-INT-22 | `docs/FDD.md` | Integração | Módulo `src/modules/webhooks` (a criar) com routes, controller, service, repository e schemas no padrão dos outros módulos; errors, publisher e signer saem de [09:28] Bruno e [09:41] Bruno | TRANSCRICAO | [09:27] Bruno |
 | FDD-INT-23 | `docs/FDD.md` | Proposta | (proposta) Lógica do worker em `webhook.processor.ts`, entre os dois nomes citados na reunião | TRANSCRICAO | [09:28] Bruno |
 | FDD-DEP-01 | `docs/FDD.md` | Dependência | Node >=20 para `fetch` e `AbortSignal.timeout`; Prisma e `uuid` já no projeto; nenhuma dependência nova | CODIGO | `package.json` |
 | FDD-DEP-02 | `docs/FDD.md` | Dependência | MySQL 8 como banco | CODIGO | `docker-compose.yml` |
