@@ -51,7 +51,7 @@ Marcar o evento como "failed" na outbox em vez de movê-lo. Larissa colocou as d
 
 ## Decisão
 
-A entrega usa retry com backoff exponencial ([09:15] Diego): 5 tentativas, com intervalos de 1 minuto, 5 minutos, 30 minutos, 2 horas e 12 horas ([09:17] Diego), fechado por Larissa ([09:17] Larissa). Uma chamada sem resposta dentro do timeout conta como falha e entra no retry ([09:42] Diego); o valor do timeout e a contagem exata de envios estão no FDD. Os cinco intervalos somam 14h36, o que bate com "quase 15 horas entre primeira falha e última tentativa" ([09:17] Diego); por isso os documentos leem a decisão como 1 envio inicial mais 5 retentativas (interpretação, não fala da reunião).
+A entrega usa retry com backoff exponencial ([09:15] Diego): 5 tentativas, com intervalos de 1 minuto, 5 minutos, 30 minutos, 2 horas e 12 horas ([09:17] Diego), fechado por Larissa ([09:17] Larissa). Uma chamada sem resposta dentro do timeout conta como falha e entra no retry ([09:42] Diego); o valor do timeout e a contagem exata de envios estão no FDD. A contagem exata de envios ficou ambígua: Larissa falou em "total 5 tentativas" ([09:48] Larissa), mas os cinco intervalos somam 14h36, o que bate com "quase 15 horas entre primeira falha e última tentativa" ([09:17] Diego) e leva a 1 envio inicial mais 5 retentativas. O ponto está nas questões em aberto do [RFC](../RFC.md), e o FDD adota 1 + 5 como premissa provisória.
 
 Esgotadas as tentativas, a falha é permanente e o evento vai para uma tabela separada, webhook_dead_letter (a criar), com o payload, o motivo da falha e o timestamp ([09:18] Diego). O reprocessamento é manual, por um endpoint administrativo que recoloca o evento na outbox como pendente ([09:18] Diego); o contrato está no FDD.
 
