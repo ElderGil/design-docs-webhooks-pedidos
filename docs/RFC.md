@@ -15,7 +15,7 @@
 
 Propomos avisar os clientes B2B por webhook quando o status de um pedido mudar. O evento é gravado numa outbox no MySQL, na mesma transação da mudança de status. Um worker em processo separado lê a outbox por polling e faz a chamada HTTP. Se o cliente falhar, há retry com backoff exponencial e, depois, uma DLQ com reprocessamento manual. Cada envio é assinado com HMAC-SHA256, com secret por endpoint, e leva um id de evento para o cliente deduplicar, porque a garantia é at-least-once. Nada exige infraestrutura nova: o módulo segue os padrões do projeto.
 
-Sete pontos ficaram adiados ou sem decisão na reunião, e a análise encontrou outras cinco lacunas. As duas listas estão no fim deste documento.
+Sete pontos ficaram adiados ou sem decisão na reunião. A análise encontrou outras dez lacunas, três delas no código que já existe. As duas listas estão no fim deste documento.
 
 ## Contexto e problema
 
@@ -73,10 +73,17 @@ Rotas, payload, headers, tabelas e matriz de erros estão no [FDD](FDD.md).
 Estes pontos não foram tratados na reunião. Aparecem aqui para revisão, não como decisão.
 
 - **Linhas de outbox quando vários webhooks querem o mesmo evento.** Um customer pode ter vários endpoints ([09:44] Sofia), o filtro é na inserção ([09:34] Bruno) e o id é único por evento ([09:25] Diego), mas a reunião não disse se o evento gera uma linha ou uma por webhook. O FDD propõe uma linha por webhook com o mesmo id de evento, para isolar retry e DLQ de cada endpoint. Validar na sessão de revisão que Larissa marcou com Bruno e Diego ([09:50] Larissa).
-- **Secret usada durante as 24 h de rotação.** A antiga "fica válida por 24 horas em paralelo" ([09:21] Sofia), mas não se disse se a plataforma assina com a nova, com a antiga ou com as duas. Para a revisão de segurança de Sofia ([09:46] Sofia).
-- **Timestamp fora da assinatura.** O HMAC é sobre o corpo ([09:22] Sofia), e o X-Timestamp foi pensado para detectar replay attack ([09:44] Diego). Sem o timestamp na assinatura, quem capturar a requisição pode trocá-lo. Para a revisão de segurança de Sofia.
+- **Secret usada durante as 24 h de rotação.** A antiga "fica válida por 24 horas em paralelo" ([09:21] Sofia), mas não se disse se a plataforma assina com a nova, com a antiga ou com as duas. O FDD também propõe recusar uma nova rotação durante a carência, para nenhuma secret perder as 24 h; o custo é que quem desconfia que a secret nova vazou espera o fim da carência. Para a revisão de segurança de Sofia ([09:46] Sofia).
+- **Timestamp fora da assinatura.** O HMAC é sobre o corpo ([09:22] Sofia), e o X-Timestamp foi pensado para detectar replay attack ([09:44] Diego). Sem o timestamp na assinatura, quem capturar a requisição pode trocá-lo, então o header sozinho não autentica o horário. Incluir o timestamp na assinatura muda a decisão de [09:22] Sofia e só entra se a revisão de segurança de Sofia aprovar.
 - **Armazenamento da secret.** Ela precisa ser recuperável a cada envio para assinar, então não pode ficar só como hash. A forma de guardar não foi discutida. Para a revisão de segurança de Sofia.
 - **Evento na criação do pedido.** A reunião falou de mudança de status ([09:00] Marcos) e de `changeStatus` ([09:40] Bruno). O pedido nasce em `OrderService.create()`, com status PENDING e uma linha de histórico. O FDD propõe que a criação não gere evento.
+- **Desempate da ordem na outbox.** Diego falou em ordem de created_at ([09:12] Diego), mas dois eventos no mesmo milissegundo empatam. O FDD propõe uma coluna `seq` autoincremental só para ordenar, sem mudar o id, que continua UUID ([09:51] Larissa). Como Larissa preferiu UUID a autoincremento, a escolha vai para a sessão de revisão com Bruno e Diego ([09:50] Larissa). A alternativa sem autoincremento está no FDD.
+- **URL apontando para a rede interna.** HTTPS ([09:23] Sofia) e redirect bloqueado não impedem cadastrar um endereço interno, e o worker passaria a chamar a própria infraestrutura. A proteção exige conferir o IP resolvido no envio e controlar a saída de rede. Para a revisão de segurança de Sofia.
+
+Três lacunas vêm do código que já existe. O desafio não altera esse código, então elas ficam registradas como dependência:
+- **Cadastro público aceita ADMIN.** `POST /auth/register` não exige login (`src/modules/auth/auth.routes.ts`) e o schema aceita `role: 'ADMIN'` (`src/modules/auth/auth.schemas.ts`). A restrição a ADMIN do reprocessamento ([09:36] Larissa) confere a role, mas qualquer pessoa consegue essa role. Para a revisão de segurança de Sofia, antes do deploy.
+- **Acesso entre customers.** A reunião liberou o CRUD para qualquer role autenticada ([09:37] Sofia). Como `User` não tem vínculo com `Customer`, isso deixa qualquer autenticado mexer nos webhooks de qualquer cliente. É consequência, não decisão da reunião. Para a revisão de segurança, junto com a questão 4.
+- **Concorrência em `changeStatus`.** O método lê o pedido sem lock e atualiza só pelo `id` (`src/modules/orders/order.service.ts`). Duas mudanças simultâneas no mesmo pedido podem validar a partir do mesmo estado, e o `from_status` do segundo evento pode não refletir a transição real. A outbox não corrige isso. O FDD descreve a mitigação possível (ler com lock), que mexe no código existente. Para a sessão de revisão com Bruno e Diego ([09:50] Larissa).
 
 ## Impacto e riscos
 
@@ -86,7 +93,7 @@ Estes pontos não foram tratados na reunião. Aparecem aqui para revisão, não 
 | --- | --- |
 | Entrega duplicada: o cliente processa o mesmo evento duas vezes | Id de evento e documentação em destaque no portal ([09:26] Marcos) |
 | Ordem perdida com retry: um evento em backoff é ultrapassado pelo seguinte do mesmo pedido (análise, não fala da reunião) | Tratamento proposto no FDD |
-| Latência acima de 10 s: polling ([09:10] Larissa) somado a um envio lento, até o timeout de 10 s ([09:42] Diego) | Medir a latência por envio (FDD) e acompanhar contra a meta do PRD |
+| Latência acima de 10 s (análise): polling ([09:10] Larissa) somado à espera por vaga quando vários clientes lentos seguram envios até o timeout de 10 s ([09:42] Diego) | Envios simultâneos com limite e sem esperar o mais lento; latência da primeira entrega, idade do pendente mais antigo e taxa de falha medidas juntas (FDD) |
 | Secret em log: o redact do logger (`src/shared/logger/index.ts`) não cobre a secret | Ajuste do redact no FDD |
 | Prazo: a Atlas citou fim do trimestre ([09:00] Marcos) e depois fim de novembro ([09:45] Marcos); a estimativa é de três sprints com revisão de segurança ([09:47] Larissa) | Marcos confirma o prazo com a Atlas ([09:47] Marcos); Sofia reserva pelo menos dois dias úteis de revisão ([09:46] Sofia) |
 

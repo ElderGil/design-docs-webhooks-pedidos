@@ -45,9 +45,11 @@ O pedido veio formalmente de três clientes: Atlas Comercial, MaxDistribuição 
 | Objetivo | Métrica | Meta | Origem |
 | --- | --- | --- | --- |
 | Avisar em "tempo real" na visão do cliente | Tempo entre a mudança de status e a entrega do aviso a um cliente disponível, no percentil 95 (o percentil é proposta deste documento) | **Menos de 10 segundos** | [09:02] Marcos |
-| Nenhuma mudança de status sem aviso, nenhum aviso sem mudança | Conciliação diária entre as mudanças de status registradas no histórico do pedido e os avisos registrados para webhooks interessados (forma de medir proposta por este documento) | **Zero divergências** | [09:06] Diego, [09:40] Bruno |
+| Nenhuma mudança de status sem aviso, nenhum aviso sem mudança | Duas verificações, propostas por este documento. Nos testes de integração, mudança revertida com aviso gravado ou mudança confirmada sem o aviso esperado (OT-1 do FDD). Em produção, conferência diária de que todo aviso registrado tem a mudança de status correspondente no histórico do pedido | **Zero divergências** | [09:06] Diego, [09:40] Bruno |
 | Sobreviver à indisponibilidade do cliente | Janela em que a plataforma continua tentando antes de considerar falha definitiva | **Cobrir pelo menos uma manutenção de 2 horas**. Com os intervalos combinados, a janela é de quase 15 horas se forem 6 envios, ou cerca de 2h36 se forem 5; a contagem está em aberto no [RFC](RFC.md#levantadas-na-reunião-e-adiadas-ou-não-decididas). Diego também citou "12 ou 24 horas" ([09:15] Diego) | [09:16] Diego, [09:17] Diego, [09:17] Marcos |
 | Atender o prazo comercial | Data de entrada em produção | **Fim de novembro**, prazo pedido pela Atlas, a confirmar com ela. A estimativa do time é de três sprints com a revisão de segurança incluída | [09:45] Marcos, [09:47] Larissa, [09:47] Marcos |
+
+A conferência em produção só olha em uma direção. Para saber se uma mudança antiga deveria ter gerado aviso, seria preciso saber quais webhooks e filtros valiam naquele momento, e o modelo não guarda o histórico de edições. A outra direção é garantida pela construção, com o aviso gravado na mesma transação da mudança ([09:40] Bruno), e é verificada nos testes.
 
 O polling dos clientes deve cair depois da adoção, mas a reunião não trouxe número de chamadas atuais nem meta de redução. Fica como observação, sem meta.
 
@@ -92,8 +94,8 @@ O polling dos clientes deve cair depois da adoção, mas a reunião não trouxe 
 | RF-12 | Aviso não entregue é reenviado automaticamente em intervalos crescentes; esgotadas as tentativas, fica guardado como falha definitiva | [09:15] Diego, [09:17] Larissa, [09:18] Diego |
 | RF-13 | Um ADMIN reprocessa um aviso guardado como falha definitiva, e a plataforma registra quem fez o reprocessamento | [09:18] Diego, [09:36] Sofia, [09:36] Larissa |
 | RF-14 | O usuário consulta o histórico das últimas 100 entregas de um webhook, com sucesso ou falha, conteúdo, resposta e tempo de resposta | [09:34] Marcos |
-| RF-15 | O usuário desativa e reativa um webhook sem removê-lo | estado ativo na configuração, [09:21] Bruno |
-| RF-16 | Cada aviso informa o momento do envio, para o cliente conseguir detectar reenvio malicioso | [09:44] Diego |
+| RF-15 | O usuário desativa e reativa um webhook sem removê-lo (proposta: a reunião citou o estado ativo na configuração, não a operação; o comportamento durante a pausa está no FDD) | [09:21] Bruno |
+| RF-16 | Cada aviso informa o momento do envio, pensado para o cliente detectar reenvio malicioso. Como esse dado não entra na assinatura, a proteção que ele dá depende da revisão de segurança (lacuna no [RFC](RFC.md#lacunas-identificadas-na-análise-não-discutidas-na-reunião)) | [09:44] Diego |
 
 Rotas, payload e headers de cada requisito estão no [FDD](FDD.md#5-contratos-públicos).
 
@@ -102,12 +104,12 @@ Rotas, payload e headers de cada requisito estão no [FDD](FDD.md#5-contratos-p�
 | ID | Requisito | Origem |
 | --- | --- | --- |
 | RNF-01 | Aviso entregue em menos de 10 segundos a um cliente disponível | [09:02] Marcos |
-| RNF-02 | O mecanismo de envio acrescenta até 2 segundos de espera antes da primeira tentativa | [09:10] Larissa |
+| RNF-02 | O mecanismo de envio acrescenta até 2 segundos de espera antes da primeira tentativa, quando o envio não está ocupado com clientes lentos (o limite de envios simultâneos está no FDD) | [09:10] Larissa |
 | RNF-03 | A chamada ao cliente tem timeout de 10 segundos; depois disso, conta como falha | [09:42] Diego |
 | RNF-04 | URL do webhook só com HTTPS; cadastro com HTTP é recusado | [09:23] Sofia |
 | RNF-05 | Aviso maior que 64 KB não é enviado nem truncado; é tratado como erro | [09:24] Larissa |
 | RNF-06 | Garantia at-least-once: o cliente pode receber o mesmo aviso mais de uma vez | [09:24] Diego |
-| RNF-07 | Avisos de um mesmo pedido chegam na ordem enquanto houver um único processo de envio; não há ordem entre pedidos diferentes. Exceção: um aviso reprocessado manualmente chega depois dos seguintes. Custo: se um aviso do pedido está esperando nova tentativa, os seguintes daquele pedido esperam também (FDD) | [09:13] Larissa |
+| RNF-07 | Avisos de um mesmo pedido chegam na ordem enquanto houver um único processo de envio; não há ordem entre pedidos diferentes. Exceção: um aviso reprocessado manualmente chega depois dos seguintes que já tinham sido entregues. Custo: se um aviso do pedido está esperando nova tentativa, os seguintes daquele pedido esperam também (FDD) | [09:13] Larissa |
 | RNF-08 | Secret única por endpoint, nunca uma secret global | [09:21] Sofia |
 | RNF-09 | Lentidão ou indisponibilidade do cliente não afeta a mudança de status de nenhum pedido | [09:04] Bruno |
 | RNF-10 | Reinício da API não interrompe o envio de avisos | [09:11] Diego |
@@ -145,8 +147,9 @@ Probabilidade e impacto são avaliação deste documento, com a justificativa qu
 | Atrasar além do prazo da Atlas e perder o cliente para o concorrente ([09:00] Marcos) | Média: a estimativa de três sprints é um chute da Larissa ([09:46] Larissa) e o prazo foi citado de duas formas, fim do trimestre e fim de novembro ([09:45] Marcos) | Alto: perda de cliente | Confirmar o prazo com a Atlas ([09:47] Marcos); manter fora de escopo e-mail, painel e rate limiting; reservar a revisão de segurança no plano ([09:47] Larissa) |
 | Cliente não descarta avisos repetidos e processa a mesma mudança duas vezes | Média: a garantia é at-least-once ([09:24] Diego) | Médio: efeito duplicado no sistema do cliente | Identificador de evento em todo aviso e destaque na documentação do portal ([09:26] Marcos) |
 | Secret vazada no lado do cliente, como já aconteceu uma vez ([09:22] Diego) | Média | Alto: avisos forjados para aquele cliente | Secret por endpoint e troca com 24 h de convivência ([09:21] Sofia) |
-| Um usuário autenticado cadastra um webhook com URL própria para um customer que não é o dele e passa a receber os avisos de pedidos desse customer | Média: o acesso está aberto por decisão da reunião ([09:37] Sofia), e usuário e customer não têm vínculo no sistema | Alto: vazamento de dados de pedidos de um cliente | Levar à revisão de segurança da Sofia antes do deploy; restringir exige mudança de modelo de dados (questão 4 do [RFC](RFC.md#levantadas-na-reunião-e-adiadas-ou-não-decididas)) |
+| Um usuário autenticado cadastra um webhook com URL própria para um customer que não é o dele e passa a receber os avisos de pedidos desse customer | Média: a reunião liberou o cadastro para qualquer role autenticada ([09:37] Sofia), e usuário e customer não têm vínculo no sistema. O acesso entre customers é consequência dessa combinação, não algo que a reunião aceitou | Alto: vazamento de dados de pedidos de um cliente | Levar à revisão de segurança da Sofia antes do deploy; restringir exige mudança de modelo de dados (questão 4 do [RFC](RFC.md#levantadas-na-reunião-e-adiadas-ou-não-decididas)) |
 | Rajada de mudanças de status gera rajada de avisos para um cliente ([09:38] Diego) | Média | Médio para o cliente | Medir os envios por webhook e decidir o rate limiting com dado ([09:39] Larissa) |
+| Qualquer pessoa cria uma conta ADMIN pelo cadastro público da API e passa a reprocessar avisos, que deveria ser só de administradores | Alta, se a API estiver exposta como está: o cadastro não exige login e aceita a role ADMIN (`src/modules/auth/auth.schemas.ts`) | Alto: a restrição de ADMIN do reprocessamento, e de qualquer rota administrativa, deixa de proteger | Problema do código existente, fora do escopo desta feature. Levar à revisão de segurança da Sofia antes do deploy ([RFC](RFC.md#lacunas-identificadas-na-análise-não-discutidas-na-reunião)) |
 
 ## 11. Critérios de aceitação
 
@@ -156,8 +159,8 @@ Probabilidade e impacto são avaliação deste documento, com a justificativa qu
 - [ ] O cliente valida a assinatura do aviso com a secret recebida.
 - [ ] Todas as tentativas de um mesmo aviso chegam com o mesmo identificador de evento.
 - [ ] Com o endpoint do cliente fora do ar, a plataforma tenta de novo nos intervalos combinados e, esgotadas as tentativas, guarda o aviso como falha definitiva.
-- [ ] Um ADMIN reprocessa um aviso guardado; um usuário sem role ADMIN não consegue; o reprocessamento fica registrado com o autor.
-- [ ] Depois de trocar a secret, o cliente consegue verificar os avisos com a secret nova ou com a antiga por 24 horas; depois disso, só com a nova. A forma de assinar durante essas 24 horas é proposta do FDD e depende da revisão da Sofia.
+- [ ] Um ADMIN reprocessa um aviso guardado; um usuário sem role ADMIN não consegue; o reprocessamento fica registrado com o autor. Enquanto o cadastro público aceitar ADMIN (risco 6), este critério prova a regra da rota, não a proteção.
+- [ ] Depois de trocar a secret, o cliente consegue verificar os avisos com a secret nova ou com a antiga por 24 horas; depois disso, só com a nova. Nenhuma troca seguinte encurta essas 24 horas. A forma de assinar durante a carência e a recusa de nova troca nesse período são propostas do FDD e dependem da revisão da Sofia.
 - [ ] O histórico mostra as últimas 100 entregas do webhook, com sucesso ou falha, conteúdo, resposta e tempo.
 - [ ] Mudanças de status continuam funcionando com o endpoint do cliente fora do ar ou lento.
 - [ ] A revisão de segurança da Sofia foi feita antes do deploy.
