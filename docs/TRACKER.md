@@ -48,7 +48,7 @@ A conta item a item está na seção [Cobertura](#cobertura), no fim.
 | PRD-RF-15 | `docs/PRD.md` | Requisito Funcional | (proposta) Usuário desativa e reativa um webhook sem removê-lo; a reunião citou só o estado ativo na configuração; a edição vem de [09:33] Bruno | TRANSCRICAO | [09:21] Bruno |
 | PRD-RF-16 | `docs/PRD.md` | Requisito Funcional | Cada aviso informa o momento do envio, pensado para detectar reenvio malicioso; fora da assinatura, a proteção depende da revisão de segurança | TRANSCRICAO | [09:44] Diego |
 | PRD-RNF-01 | `docs/PRD.md` | Requisito Não Funcional | Aviso entregue em menos de 10 s a um cliente disponível | TRANSCRICAO | [09:02] Marcos |
-| PRD-RNF-02 | `docs/PRD.md` | Requisito Não Funcional | O envio acrescenta até 2 s de espera antes da primeira tentativa | TRANSCRICAO | [09:10] Larissa |
+| PRD-RNF-02 | `docs/PRD.md` | Requisito Não Funcional | O envio acrescenta até 2 s de espera antes da primeira tentativa, quando não está ocupado com clientes lentos | TRANSCRICAO | [09:10] Larissa |
 | PRD-RNF-03 | `docs/PRD.md` | Requisito Não Funcional | Timeout de 10 s na chamada ao cliente; depois disso conta como falha | TRANSCRICAO | [09:42] Diego |
 | PRD-RNF-04 | `docs/PRD.md` | Requisito Não Funcional | URL do webhook só com HTTPS; cadastro com HTTP é recusado | TRANSCRICAO | [09:23] Sofia |
 | PRD-RNF-05 | `docs/PRD.md` | Requisito Não Funcional | Aviso acima de 64 KB não é enviado nem truncado; é erro | TRANSCRICAO | [09:24] Larissa |
@@ -86,7 +86,7 @@ A conta item a item está na seção [Cobertura](#cobertura), no fim.
 | PRD-AC-09 | `docs/PRD.md` | Critério de Aceitação | Histórico mostra as últimas 100 entregas com resultado, conteúdo, resposta e tempo | TRANSCRICAO | [09:34] Marcos |
 | PRD-AC-10 | `docs/PRD.md` | Critério de Aceitação | Mudança de status continua funcionando com o cliente lento ou fora do ar | TRANSCRICAO | [09:04] Bruno |
 | PRD-AC-11 | `docs/PRD.md` | Critério de Aceitação | Revisão de segurança da Sofia feita antes do deploy | TRANSCRICAO | [09:46] Sofia |
-| PRD-PROB-01 | `docs/PRD.md` | Contexto | Clientes consultam GET /orders periodicamente, integração lenta e cara | TRANSCRICAO | [09:00] Marcos |
+| PRD-PROB-01 | `docs/PRD.md` | Contexto | Clientes consultam GET /orders periodicamente, integração lenta e cara; a queda do polling fica como observação, sem meta | TRANSCRICAO | [09:00] Marcos |
 | PRD-PROB-02 | `docs/PRD.md` | Contexto | O cliente quer saber da mudança sem atualizar manualmente | TRANSCRICAO | [09:02] Marcos |
 | PRD-PROB-03 | `docs/PRD.md` | Risco | A Atlas pode migrar para concorrente se a feature não sair até o fim do trimestre | TRANSCRICAO | [09:00] Marcos |
 | PRD-PROB-04 | `docs/PRD.md` | Restrição | Não há mecanismo de notificação, evento ou fila no código; `src/modules` só tem auth, users, customers, products e orders | CODIGO | `src/routes/index.ts` |
@@ -159,7 +159,7 @@ A conta item a item está na seção [Cobertura](#cobertura), no fim.
 | ADR-007-ALT-01 | `docs/adrs/ADR-007-snapshot-do-payload-na-insercao.md` | Alternativa Descartada | Guardar só o order_id e montar o payload no envio | TRANSCRICAO | [09:51] Bruno |
 | ADR-007-TO | `docs/adrs/ADR-007-snapshot-do-payload-na-insercao.md` | Trade-off | (análise) Linhas maiores e evento que pode descrever estado superado ([09:52] Larissa); o cliente consulta o pedido para o atual | TRANSCRICAO | [09:43] Diego |
 | FDD-OT-1 | `docs/FDD.md` | Objetivo | Toda mudança de status com interessado ([09:34] Bruno) gera evento na outbox; mudança revertida não gera | TRANSCRICAO | [09:06] Diego |
-| FDD-OT-2 | `docs/FDD.md` | Objetivo | Com vaga livre, a primeira tentativa começa até 2 s depois da inserção; medida pelo relógio do MySQL, desde a inserção e não do commit | TRANSCRICAO | [09:10] Larissa |
+| FDD-OT-2 | `docs/FDD.md` | Objetivo | Com vaga livre, a primeira tentativa começa até 2 s, mais o tempo da consulta, depois da inserção; mede desde a inserção, não do commit, com relógios de API e MySQL sincronizados (FDD 4.1) | TRANSCRICAO | [09:10] Larissa |
 | FDD-OT-3 | `docs/FDD.md` | Objetivo | Cliente saudável recebe o evento em menos de 10 s | TRANSCRICAO | [09:02] Marcos |
 | FDD-OT-4 | `docs/FDD.md` | Objetivo | Falha ou timeout ([09:42] Diego) agenda tentativas em 1 min, 5 min, 30 min, 2 h e 12 h e depois move para a DLQ ([09:18] Diego) | TRANSCRICAO | [09:17] Larissa |
 | FDD-OT-5 | `docs/FDD.md` | Objetivo | Todo envio leva HMAC-SHA256 verificável com a secret do endpoint | TRANSCRICAO | [09:22] Sofia |
@@ -296,10 +296,10 @@ A conta item a item está na seção [Cobertura](#cobertura), no fim.
 | FDD-OBS-11 | `docs/FDD.md` | Proposta | (proposta) Coleta pelos logs e por `webhook_worker_stats` a cada 60 s, sem biblioteca de métricas nova | CODIGO | `package.json` |
 | FDD-OBS-12 | `docs/FDD.md` | Proposta | (proposta) Tracing por correlação: X-Request-Id inteiro na outbox; event_id e outboxId nas tentativas, na DLQ e nos logs de falha | CODIGO | `src/middlewares/request-logger.middleware.ts` |
 | FDD-OBS-13 | `docs/FDD.md` | Proposta | (proposta) O worker loga com o nome de serviço `order-management-webhook-worker`, porque o logger fixa `order-management-api` | CODIGO | `src/shared/logger/index.ts` |
-| FDD-OBS-14 | `docs/FDD.md` | Proposta | (proposta) Fórmula da latência: `startedAt + durationMs - createdAt`, primeira tentativa com sucesso, janela de 24 h, relógio do MySQL | TRANSCRICAO | [09:02] Marcos |
+| FDD-OBS-14 | `docs/FDD.md` | Proposta | (proposta) Fórmula da latência: `startedAt + durationMs - createdAt`, primeira tentativa com sucesso, janela de 24 h; `createdAt` da API e `startedAt` do MySQL, com NTP | TRANSCRICAO | [09:02] Marcos |
 | FDD-OBS-15 | `docs/FDD.md` | Proposta | (proposta) Gauges de idade da linha elegível mais antiga (sem os eventos que esperam o anterior) e de falha na primeira tentativa, lidos junto com o p95 | TRANSCRICAO | [09:07] Bruno |
 | FDD-OBS-16 | `docs/FDD.md` | Proposta | (proposta) Log `webhook_delivery_result_discarded` para resultado que chega depois da recuperação da linha | TRANSCRICAO | [09:24] Diego |
-| FDD-OBS-17 | `docs/FDD.md` | Proposta | (proposta) Log diário `webhook_reconciliation`: avisos sem a mudança correspondente em `order_status_history`, a conferência do PRD | TRANSCRICAO | [09:06] Diego |
+| FDD-OBS-17 | `docs/FDD.md` | Proposta | (proposta) Log diário `webhook_reconciliation`: avisos sem a mudança correspondente em `order_status_history`, fora pedidos apagados; a conferência do PRD | TRANSCRICAO | [09:06] Diego |
 | FDD-OBS-18 | `docs/FDD.md` | Proposta | (proposta) O `errorMiddleware` loga o erro inteiro; o service relança sem a mensagem original as falhas nas escritas que levam a secret | CODIGO | `src/middlewares/error.middleware.ts` |
 | FDD-INT-01 | `docs/FDD.md` | Integração | `order.service.ts` chama `publishWebhookEvent` na mesma transação; a posição depois do histórico é escolha da integração | TRANSCRICAO | [09:41] Bruno |
 | FDD-INT-02 | `docs/FDD.md` | Integração | O snapshot usa `to`, porque o `order` lido em `changeStatus` é anterior ao update | CODIGO | `src/modules/orders/order.service.ts` |
@@ -323,7 +323,7 @@ A conta item a item está na seção [Cobertura](#cobertura), no fim.
 | FDD-INT-20 | `docs/FDD.md` | Integração | `customer.repository.ts` valida o `customerId` no cadastro | CODIGO | `src/modules/customers/customer.repository.ts` |
 | FDD-INT-21 | `docs/FDD.md` | Integração | Fábrica `createTestWebhook` nos helpers de teste | CODIGO | `tests/helpers/factories.ts` |
 | FDD-INT-21B | `docs/FDD.md` | Integração | Limpeza das quatro tabelas novas no `beforeEach`, antes de `order` | CODIGO | `tests/setup.ts` |
-| FDD-INT-22 | `docs/FDD.md` | Integração | Módulo `src/modules/webhooks` (a criar) no padrão dos outros módulos; errors e processor de [09:28] Bruno, publisher de [09:41] Bruno; signer é proposta ligada ao HMAC de [09:22] Sofia | TRANSCRICAO | [09:27] Bruno |
+| FDD-INT-22 | `docs/FDD.md` | Integração | Módulo `src/modules/webhooks` (a criar): routes e admin routes, controller, service, repository e schemas no padrão dos outros módulos; errors e processor de [09:28] Bruno, publisher de [09:41] Bruno; signer é proposta ligada ao HMAC de [09:22] Sofia | TRANSCRICAO | [09:27] Bruno |
 | FDD-INT-23 | `docs/FDD.md` | Proposta | (proposta) Lógica do worker em `webhook.processor.ts`, entre os dois nomes citados na reunião | TRANSCRICAO | [09:28] Bruno |
 | FDD-DEP-01 | `docs/FDD.md` | Dependência | Versões no `package.json`; `fetch` e `AbortSignal.timeout` fazem parte do Node 20; não acrescentar dependência é plano do FDD | CODIGO | `package.json` |
 | FDD-DEP-02 | `docs/FDD.md` | Dependência | MySQL 8 como banco | CODIGO | `docker-compose.yml` |
@@ -372,7 +372,7 @@ A contagem segue a regra de "O que conta como item". Cada unidade dos documentos
 | ADRs | Decisão, alternativas e trade-off | 27 | 27 |
 | FDD | 2. Objetivos técnicos | 7 | 7 |
 | FDD | 3. Exclusões e criação do pedido | 7 | 7 |
-| FDD | 4.1 Modelo de dados | 19 | 19 |
+| FDD | 4.1 Modelo de dados | 20 | 20 |
 | FDD | 4.2 Criação do evento | 9 | 9 |
 | FDD | 4.3 Worker | 9 | 9 |
 | FDD | 4.4 Retry | 2 | 2 |
@@ -387,7 +387,7 @@ A contagem segue a regra de "O que conta como item". Cada unidade dos documentos
 | FDD | 9. Integração | 29 | 29 |
 | FDD | 10. Dependências | 5 | 5 |
 | FDD | 12. Riscos | 12 | 12 |
-| **Total** | | **339** | **339 (100%)** |
+| **Total** | | **340** | **340 (100%)** |
 
 **Unidade por unidade.**
 
@@ -411,7 +411,7 @@ ADRs
 FDD
 - 2: OT-1 a OT-7 → FDD-OT-1 a 7.
 - 3: criação do pedido → FDD-ESC-01; as seis exclusões → ESC-02 a 07.
-- 4.1: padrão UUID → FDD-DADOS-01; camelCase → DADOS-15; tabelas `webhook_endpoints`, `webhook_outbox` (com índices), `webhook_dead_letter` e `webhook_deliveries` → DADOS-02, 03 e 19, 04, 05; linha por par → DADOS-06; `seq` → DADOS-16; Json → DADOS-07; FAILED → DADOS-08 e 17; remoção lógica → DADOS-09; FK → DADOS-10; payload só na outbox e na DLQ → DADOS-11; `responseBody` → DADOS-12; `replayCount` → DADOS-20; `claimToken` → DADOS-21; relógio e fuso → DADOS-22; secret → DADOS-13; tabela de transições → DADOS-18.
+- 4.1: padrão UUID → FDD-DADOS-01; camelCase → DADOS-15; tabelas `webhook_endpoints`, `webhook_outbox` (com índices), `webhook_dead_letter` e `webhook_deliveries` → DADOS-02, 03 e 19, 04, 05; linha por par → DADOS-06; `seq` → DADOS-16; Json → DADOS-07; FAILED → DADOS-08 e 17; remoção lógica → DADOS-09; FK → DADOS-10; payload só na outbox e na DLQ → DADOS-11; `responseBody` → DADOS-12; `replayCount` → DADOS-20; `seq` fora de resposta e de log → DADOS-16; `claimToken` → DADOS-21; relógio e fuso → DADOS-22; secret → DADOS-13; tabela de transições → DADOS-18.
 - 4.2: passo 1 → FDD-FLUXO-01; passo 2 → FLUXO-02 e 03; passo 3 → FLUXO-04; passo 4 → FLUXO-05; passo 5 → FLUXO-06; passo 6 → DADOS-06; passo 7 → FLUXO-26; passo 8 → FDD-RES-04; `requestId` → FLUXO-07 e FDD-INT-03.
 - 4.3: passo 1 → FLUXO-08, 09 e 14; passo 2 → FLUXO-31; passo 3 → FLUXO-10, 11 e 27; passo 4 → FLUXO-12; passo 5 → FLUXO-13; passo 6 → FLUXO-15, 15B e RES-03; passo 7 → FLUXO-29; passo 8 → FLUXO-28; passo 9 → RES-06 e FLUXO-30.
 - 4.4: tabela e premissa → FLUXO-16; constantes → FLUXO-17.

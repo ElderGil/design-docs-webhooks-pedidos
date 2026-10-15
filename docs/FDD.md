@@ -47,7 +47,7 @@ Hoje a aplicação não tem nenhum mecanismo de evento ou fila. A mudança de st
 
 ### 4.1 Modelo de dados (proposta)
 
-As tabelas seguem o padrão do `prisma/schema.prisma`: id `String @id @default(uuid()) @db.Char(36)` ([09:51] Larissa), `createdAt`, `updatedAt`, nome de tabela em snake_case com `@@map` e nome de campo em camelCase, sem `@map`. É o que o projeto já faz: em `orders`, a coluna física se chama `customerId` (`prisma/migrations/20260519182739_init/migration.sql`). As consultas com `$queryRaw` da seção 4.3 usam esses nomes físicos. Uma migração nova, só aditiva, entra em `prisma/migrations/`.
+As tabelas seguem o padrão do `prisma/schema.prisma`: id `String @id @default(uuid()) @db.Char(36)` ([09:51] Larissa), `createdAt` e `updatedAt` nas tabelas que mudam de estado, nome de tabela em snake_case com `@@map` e nome de campo em camelCase, sem `@map`. É o que o projeto já faz: em `orders`, a coluna física se chama `customerId` (`prisma/migrations/20260519182739_init/migration.sql`). As consultas com `$queryRaw` da seção 4.3 usam esses nomes físicos. Uma migração nova, só aditiva, entra em `prisma/migrations/`.
 
 | Tabela (a criar) | Campos principais | Origem |
 | --- | --- | --- |
@@ -66,6 +66,7 @@ As tabelas seguem o padrão do `prisma/schema.prisma`: id `String @id @default(u
 - **O payload fica só na outbox e na DLQ.** O histórico de entregas aponta para a outbox pelo `outboxId`.
 - **`responseBody` guarda até 4 KB da resposta**, lidos com limite (seção 4.3), para o histórico não crescer sem controle. `responseTruncated` indica que houve corte.
 - **`replayCount`** conta quantas vezes a linha foi reprocessada e é copiado para cada tentativa. Ele separa os envios depois de reprocessamento na medição de latência (seção 8).
+- **`seq` fica só no banco.** Ele não sai em resposta da API nem em log, porque é `BigInt` e o `JSON.stringify` do Node não serializa esse tipo.
 - **`claimToken`** é um UUID gerado pelo worker a cada claim. A conclusão e a recuperação da tentativa localizam a linha por ele, sem depender de comparar datas (seção 4.3).
 - **Relógio e fuso.** O Prisma grava `DateTime` em UTC. `createdAt` e `nextAttemptAt` saem do processo que grava, API ou worker. `lockedAt` sai do MySQL, com `UTC_TIMESTAMP(3)`, que não depende do fuso da sessão. As contas que misturam os dois relógios, como a espera na fila, pressupõem servidores sincronizados por NTP. Este FDD não trata relógio fora de sincronia.
 - **Armazenamento da secret** depende da revisão de segurança ([RFC](RFC.md#lacunas-identificadas-na-análise-não-discutidas-na-reunião)). Requisitos mínimos: o worker precisa conseguir ler a secret para assinar; ela não volta em resposta fora da criação e da rotação (proposta); e nunca aparece em log (seção 8).
@@ -132,7 +133,7 @@ sequenceDiagram
   participant CL as Endpoint do cliente
   loop a cada 2 s
     W->>DB: recupera linhas PROCESSING travadas há mais de 60 s
-    W->>DB: marca FAILED as PENDING de webhook removido
+    W->>DB: marca como FAILED as PENDING de webhook removido
     W->>DB: seleciona até "vagas livres" linhas elegíveis (ordem por seq)
     W->>DB: claim condicional: PROCESSING, lockedAt = agora
     W-)CL: POST assinado (timeout 10 s), sem esperar os outros envios
@@ -147,7 +148,7 @@ sequenceDiagram
   end
 ```
 
-1. **Envios simultâneos e ciclo (proposta).** O worker mantém no máximo 10 envios em andamento, a leitura deste FDD para "batch pequeno" ([09:08] Diego). A cada 2 s ([09:09] Diego), o ciclo calcula as vagas livres (10 menos os envios em andamento). Se não houver vaga, ele não consulta o banco. Se houver, seleciona até esse número de linhas, faz o claim e dispara cada envio sem esperar os outros terminarem. Quando um envio termina, a vaga fica livre para o ciclo seguinte. Um cliente lento ocupa uma vaga, não o ciclo inteiro. O ciclo nunca roda em paralelo consigo mesmo: o próximo é agendado só depois que a parte de banco do anterior termina.
+1. **Envios simultâneos e ciclo (proposta).** O worker mantém no máximo 10 envios em andamento, a leitura deste FDD para "batch pequeno" ([09:08] Diego). A cada 2 s ([09:09] Diego), o ciclo calcula as vagas livres (10 menos os envios em andamento). A recuperação de linhas travadas e o encerramento das linhas de webhook removido rodam em todo ciclo. Se não houver vaga, o ciclo para aí e não busca linhas para enviar. Se houver, seleciona até esse número de linhas, faz o claim e dispara cada envio sem esperar os outros terminarem. Quando um envio termina, a vaga fica livre para o ciclo seguinte. Um cliente lento ocupa uma vaga, não o ciclo inteiro. O ciclo nunca roda em paralelo consigo mesmo: o próximo é agendado só depois que a parte de banco do anterior termina.
 2. **O que a meta de 2 s cobre.** São três tempos diferentes:
    - o intervalo de polling: 2 s;
    - a espera na fila: do `createdAt` da outbox até o `startedAt` da primeira tentativa;
@@ -161,7 +162,7 @@ sequenceDiagram
 
    A ordenação é `ORDER BY seq`. A ordem de `created_at` que Diego citou ([09:12] Diego) vira ordem de `seq`, que é a mesma ordem de inserção, sem empate. Sem a regra do `NOT EXISTS`, um evento em backoff seria ultrapassado pelo seguinte do mesmo pedido, e a ordem de [09:13] Larissa se perderia. Limite conhecido: um evento reprocessado da DLQ chega depois dos eventos seguintes do mesmo pedido que já tinham sido entregues. Se um evento seguinte estiver em envio na hora do reprocessamento, os dois podem chegar fora de ordem.
 4. **Webhook removido (proposta).** No início do ciclo, um update marca como `FAILED`, com `failureReason = WEBHOOK_DELETED`, as linhas `PENDING` de webhooks com `deletedAt` preenchido. Esse passo não depende da seleção de envios, que só olha webhooks ativos. Uma linha que estava em envio na hora da remoção termina o envio; se falhar e voltar a `PENDING`, o passo do ciclo seguinte a encerra.
-5. **Claim, linha a linha.** O worker gera um `claimToken` (UUID) e roda `UPDATE webhook_outbox o JOIN webhook_endpoints e ON e.id = o.webhookId SET o.status = 'PROCESSING', o.lockedAt = UTC_TIMESTAMP(3), o.claimToken = ? WHERE o.id = ? AND o.status = 'PENDING' AND o.nextAttemptAt <= UTC_TIMESTAMP(3) AND e.active = true AND e.deletedAt IS NULL`. O claim confere de novo o vencimento e o webhook, então uma seleção antiga não antecipa um retry nem envia para webhook pausado ou removido depois da seleção. Se nenhuma linha for afetada, o worker pula. O desenho continua sendo de um único worker ([09:12] Diego). O claim evita que duas consultas peguem a mesma linha ao mesmo tempo, mas não garante ordem nem ausência de duplicata com dois workers rodando. Esse cenário não está no escopo (RFC, questão 3).
+5. **Claim, linha a linha (proposta).** O worker gera um `claimToken` (UUID) e roda `UPDATE webhook_outbox o JOIN webhook_endpoints e ON e.id = o.webhookId SET o.status = 'PROCESSING', o.lockedAt = UTC_TIMESTAMP(3), o.claimToken = ? WHERE o.id = ? AND o.status = 'PENDING' AND o.nextAttemptAt <= UTC_TIMESTAMP(3) AND e.active = true AND e.deletedAt IS NULL`. O claim confere de novo o vencimento e o webhook, então uma seleção antiga não antecipa um retry nem envia para webhook pausado ou removido depois da seleção. Se nenhuma linha for afetada, o worker pula. O desenho continua sendo de um único worker ([09:12] Diego). O claim evita que duas consultas peguem a mesma linha ao mesmo tempo, mas não garante ordem nem ausência de duplicata com dois workers rodando. Esse cenário não está no escopo (RFC, questão 3).
 6. **Requisição.** POST para a `url` atual do webhook, com o corpo e os headers da seção 5.2, usando `fetch` nativo com `AbortSignal.timeout(10_000)` ([09:42] Diego) e `redirect: 'manual'` **(proposta)**. Uma resposta 3xx conta como falha; seguir o redirect permitiria trocar o `https` cadastrado por `http` ([09:23] Sofia). O Node 20, exigido pelo `package.json`, já traz essas APIs. Nenhuma dependência nova.
 7. **Leitura da resposta (proposta).** O status HTTP decide o resultado assim que os headers chegam, e `durationMs` mede até esse momento, que é o tempo de resposta do cliente: 2xx é sucesso; qualquer outra resposta, timeout ou erro de rede é falha (a reunião não distinguiu 4xx de 5xx). O corpo é lido em stream, pelo `response.body`, até 4 KB, e o restante é cancelado com `reader.cancel()`. A leitura fica sob o mesmo timeout de 10 s. Se o corpo falhar ou estourar o tempo depois de um 2xx, a tentativa continua sendo sucesso, e o histórico guarda o que foi lido, com `responseTruncated = true`. Nada lê o corpo inteiro para cortar depois. A vaga fica ocupada até a leitura terminar, no máximo pelo mesmo timeout.
 8. **Conclusão da tentativa (proposta).** O resultado de cada envio é gravado numa transação curta, fora do HTTP. A transação começa lendo a linha com `SELECT ... FROM webhook_outbox WHERE id = ? AND status = 'PROCESSING' AND claimToken = ? FOR UPDATE`. Se não achar, a linha já foi recuperada como travada (passo 9): nada é gravado, e o worker loga o descarte. Se achar, grava a linha em `webhook_deliveries` (`startedAt` = `lockedAt` lido, `durationMs` medido no processo) e atualiza a outbox (estado, `attempts`, `nextAttemptAt`, `failureReason`, `lockedAt` e `claimToken` nulos). A DLQ entra na mesma transação quando a tentativa é a última. Cada envio tem o próprio tratamento de erro, separando falha HTTP de falha ao gravar o resultado; o worker não depende de um `catch` geral do ciclo. Se o cliente respondeu 2xx e a gravação falhou, a linha fica em `PROCESSING` e volta pelo passo 9 como tentativa interrompida: o cliente recebe de novo, o que o at-least-once já prevê ([09:24] Diego). Se a gravação falhar sempre, por exemplo com o banco fora do ar, até um evento que o cliente aceitou pode chegar à DLQ; o reprocessamento manual resolve. Não há atomicidade entre o HTTP e o MySQL.
@@ -478,7 +479,7 @@ Na coluna Origem, a fala citada é a regra; o nome do código, quando não foi d
 
 | Código | HTTP | Classe | Quando | Origem |
 | --- | --- | --- | --- | --- |
-| `WEBHOOK_NOT_FOUND` | 404 | nova, estende `AppError` | Webhook inexistente ou removido no PATCH, DELETE, rotação ou reprocessamento | código citado por [09:28] Bruno |
+| `WEBHOOK_NOT_FOUND` | 404 | nova, estende `AppError` | Webhook inexistente ou removido no PATCH, DELETE, rotação, histórico ou reprocessamento | código citado por [09:28] Bruno |
 | `WEBHOOK_INVALID_URL` | 400 | `BadRequestError` | URL sem `https` | regra de [09:23] Sofia; código citado por [09:28] Bruno |
 | `WEBHOOK_CUSTOMER_NOT_FOUND` | 404 | nova, estende `AppError` | `customerId` inexistente no cadastro | proposta |
 | `WEBHOOK_DEAD_LETTER_NOT_FOUND` | 404 | nova, estende `AppError` | Item da DLQ inexistente | proposta |
@@ -577,7 +578,7 @@ Logs estruturados em JSON com o logger existente:
 - **Valor por evento:** `startedAt + durationMs − outbox.createdAt`. Ele junta `webhook_deliveries` à `webhook_outbox` pelo `outboxId`.
 - **Recorte:** só tentativas com `attempt = 1`, `replayCount = 0` e `success = true`. Ou seja, primeira entrega a um cliente que respondeu na hora, que é o "cliente disponível" da meta ([09:02] Marcos). Retry e reprocessamento ficam fora.
 - **Janela:** eventos com `outbox.createdAt` nas últimas 24 h.
-- **Relógios:** `createdAt` e `startedAt` vêm do relógio do MySQL (`startedAt` é o `lockedAt` gravado no claim). `durationMs` é medido no processo do worker, com relógio monotônico.
+- **Relógios:** `createdAt` vem do processo da API, que grava a linha. `startedAt` vem do MySQL, porque é o `lockedAt` gravado no claim. `durationMs` é medido no processo do worker, com relógio monotônico. A conta pressupõe API e MySQL sincronizados por NTP (seção 4.1).
 - **Limitações:**
   - a conta parte da inserção na outbox, não do commit;
   - um evento que esperou uma pausa do webhook entra no p95 como lento, porque o modelo não guarda quando o webhook foi pausado ou reativado;
@@ -588,7 +589,7 @@ O p95 sozinho não declara saúde. Ele é lido junto com `webhook_first_attempt_
 **Coleta (proposta).** O projeto não tem biblioteca de métricas, e este FDD não cria dependência sem aprovação. As medidas vêm de duas fontes que o desenho já tem:
 - os logs de cada envio, que carregam `durationMs`, resultado e tentativa;
 - um log `webhook_worker_stats`, emitido pelo worker a cada 60 s, com os gauges acima e os envios por webhook no último minuto, calculados por SQL sobre `webhook_outbox`, `webhook_deliveries` e `webhook_dead_letter`;
-- um log `webhook_reconciliation`, uma vez por dia, com a conferência do objetivo de "zero divergências" do PRD. A consulta conta as linhas da outbox do dia anterior sem uma linha em `order_status_history` do mesmo `orderId` com `toStatus` igual ao `to_status` do payload. A direção contrária não é conferida em produção, como o PRD explica.
+- um log `webhook_reconciliation`, uma vez por dia, com a conferência do objetivo de "zero divergências" do PRD. A consulta conta as linhas da outbox do dia anterior sem uma linha em `order_status_history` do mesmo `orderId` com `toStatus` igual ao `to_status` do payload. Ficam fora os pedidos que não existem mais: `OrderService.delete` apaga pedidos PENDING ou CANCELLED, e o histórico vai junto em cascata (`prisma/migrations/20260519182739_init/migration.sql`), mas a outbox fica. A direção contrária não é conferida em produção, como o PRD explica.
 
 O p95 do critério de aceite sai da consulta acima. Expor em Prometheus fica para quando o time escolher a ferramenta.
 
