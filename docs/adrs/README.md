@@ -11,3 +11,4 @@ Decisões arquiteturais do Sistema de Webhooks de Notificação de Pedidos, uma 
 | [ADR-005](ADR-005-entrega-at-least-once-com-x-event-id.md) | Entrega at-least-once com X-Event-Id |
 | [ADR-006](ADR-006-reuso-dos-padroes-do-projeto.md) | Reuso dos padrões do projeto |
 | [ADR-007](ADR-007-snapshot-do-payload-na-insercao.md) | Snapshot do payload na inserção |
+| [ADR-008](ADR-008-uma-linha-de-outbox-por-evento-e-webhook.md) | Uma linha de outbox por evento e webhook (proposto) |
